@@ -1,1 +1,1 @@
-# Graphical-Neural-Network-Practice
+# Graph-Neural-Network-Practice
