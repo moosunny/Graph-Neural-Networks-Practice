@@ -1,0 +1,214 @@
+{
+  "nbformat": 4,
+  "nbformat_minor": 0,
+  "metadata": {
+    "colab": {
+      "provenance": [],
+      "authorship_tag": "ABX9TyPL9yN+Xdc2DuRWE2tSebk0",
+      "include_colab_link": true
+    },
+    "kernelspec": {
+      "name": "python3",
+      "display_name": "Python 3"
+    },
+    "language_info": {
+      "name": "python"
+    }
+  },
+  "cells": [
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "view-in-github",
+        "colab_type": "text"
+      },
+      "source": [
+        "<a href=\"https://colab.research.google.com/github/moosunny/Graph-Neural-Networks-Practice/blob/main/Chapter%206.%20%20Intoroducing%20Graph%20Convolution%20Networks\" target=\"_parent\"><img src=\"https://colab.research.google.com/assets/colab-badge.svg\" alt=\"Open In Colab\"/></a>"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "## Chapter 6. Intoroducing Graph Convolution Networks\n",
+        "\n",
+        "이번 챕터에서는 그래프 컨볼루션 네트워크를 소개한고 이전 챕터에서 소개된 Vanilla GNN 의 한게점에 대해 이야기한다.\n",
+        "\n",
+        "또한, 이전에는 다루지 않았던 Node Regression 문제에 GNN을 적용하여 정형 데이터에도 GNN이 유용함을 확인한다."
+      ],
+      "metadata": {
+        "id": "TUmbV43t9UTr"
+      }
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "그래프 구조는 Tabular와 이미지 데이터와 다르게 개별 노드가 보유한 이웃 노드의 개수는 노드 마다 상이하다.\n",
+        "\n",
+        "$$ h_i = \\sum_{j \\in N_i} x_j W^T $$\n",
+        "\n",
+        "상기 수식의 경우 개별 노드에 대한 이웃 노드 개수의 차이를 고려하지 않는다. 만약에 1번 노드가 보유한 이웃 노드의 수가 1000개, 2번 노드가 1개 보유하고 있다고 가정했을 때, 임베딩 된 $h_A$와 $h_B$를 효과적으로 비교하기 위한 방법이 필요하다.\n",
+        "\n",
+        "따라서, 하기 수식과 같이 임베딩 이웃 노드의 개수에 따라 개별 임베딩 값을 나누어 주면 된다.\n",
+        "\n",
+        "$$ h_i = \\frac{1}{deg_{(i)}} \\sum_{j \\in N_i} x_j W^T $$\n",
+        "\n",
+        "이를 통해, 이웃 노드 수를 반영한 차수 행렬을 생성하여 정규화 계수를 추가해주면 된다."
+      ],
+      "metadata": {
+        "id": "smPsMYl-_h_9"
+      }
+    },
+    {
+      "cell_type": "code",
+      "execution_count": 8,
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "cn_PgPZ15Wwq",
+        "outputId": "cf659608-266b-44e5-dcc5-7ced300e3121"
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "[[0.33333333 0.         0.         0.        ]\n",
+            " [0.         1.         0.         0.        ]\n",
+            " [0.         0.         0.5        0.        ]\n",
+            " [0.         0.         0.         0.5       ]]\n",
+            "\n",
+            "[[0.25       0.         0.         0.        ]\n",
+            " [0.         0.5        0.         0.        ]\n",
+            " [0.         0.         0.33333333 0.        ]\n",
+            " [0.         0.         0.         0.33333333]]\n"
+          ]
+        }
+      ],
+      "source": [
+        "import numpy as np\n",
+        "\n",
+        "D = np.array([\n",
+        "    [3, 0, 0, 0],\n",
+        "    [0, 1, 0, 0],\n",
+        "    [0, 0, 2, 0],\n",
+        "    [0, 0, 0, 2]\n",
+        "])\n",
+        "\n",
+        "print(np.linalg.inv(D), end = \"\\n\\n\") # D 행렬의 역행렬\n",
+        "\n",
+        "# 차수 행렬을 구하기 위한 D^-1, self loop를 반영하기 위해 항등행렬을 더해줌\n",
+        "D_inv = np.linalg.inv(D + np.identity(4))\n",
+        "\n",
+        "print(D_inv)"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "노드의 feature 정보를 담은 input 행렬 A와 차수 행렬 D를 앞 혹은 뒤에 곱해주는지에 따라 두가지 효과가 있다.\n",
+        "\n",
+        "1. $ \\tilde{D}^{-1} \\tilde{A} X W^T $: 모든 열에 대한 정규화\n",
+        "2. $  \\tilde{A}\\tilde{D}^{-1} X W^T $: 모든 행에 대한 정규화"
+      ],
+      "metadata": {
+        "id": "edr8Bx73P5hr"
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# 모든 열에 대한 정규화\n",
+        "A = np.array([\n",
+        "    [1, 1, 1, 1],\n",
+        "    [1, 1, 0, 0],\n",
+        "    [1, 0, 1, 1],\n",
+        "    [1, 0, 1, 1]\n",
+        "])\n",
+        "\n",
+        "print(np.linalg.inv(D + np.identity(4)) @ A)"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "fJ4f088eFISi",
+        "outputId": "ea86b97c-8b9f-45c1-ca65-5d8f964397ca"
+      },
+      "execution_count": 15,
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "[[0.25       0.25       0.25       0.25      ]\n",
+            " [0.5        0.5        0.         0.        ]\n",
+            " [0.33333333 0.         0.33333333 0.33333333]\n",
+            " [0.33333333 0.         0.33333333 0.33333333]]\n"
+          ]
+        }
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "# 모든 행에 대한 정규화\n",
+        "A = np.array([\n",
+        "    [1, 1, 1, 1],\n",
+        "    [1, 1, 0, 0],\n",
+        "    [1, 0, 1, 1],\n",
+        "    [1, 0, 1, 1]\n",
+        "])\n",
+        "\n",
+        "print(A @ np.linalg.inv(D + np.identity(4)))"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "JiJsYzygHpfb",
+        "outputId": "413dca4a-a953-4833-87b2-cae8fc2e3d79"
+      },
+      "execution_count": 16,
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "[[0.25       0.5        0.33333333 0.33333333]\n",
+            " [0.25       0.5        0.         0.        ]\n",
+            " [0.25       0.         0.33333333 0.33333333]\n",
+            " [0.25       0.         0.33333333 0.33333333]]\n"
+          ]
+        }
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "실제로 두가지 방법을 모두 코드를 통해 확인 했을 때, 열을 정규화한 경우의 각 열의 합은 1이고 행을 정규화한 경우는 각 행의 합이 1이다.\n",
+        "\n",
+        "GCN을 개발한 저자들은 이 두가지 정규화 방식을 혼용한 hybrid 방식의 정규화 방법을 제안했다. 이웃이 많은 노드의 특징이 고립된 노드의 특징과 달리 매우 쉽게 퍼진다는 것을 발견했다. 이를 해결하기 위해 이웃 노드가 적은 노드의 가중치가 더 높도록 유도하는 정규화 식을 개발했다.\n",
+        "\n",
+        "$$H =  \\tilde{D}^{-\\frac{1}{2}} \\tilde{A^T} \\tilde{D}^{-\\frac{1}{2}}W^T $$\n",
+        "\n",
+        "개별 임베딩 측면에서 이 수식은 다음과 같다.\n",
+        "\n",
+        "$$ h_i = \\sum_{j \\in N_i}\\frac{1}{\\sqrt{\\deg(i)} \\sqrt{\\deg(j)}} x_j W^T $$\n",
+        "\n"
+      ],
+      "metadata": {
+        "id": "HJHPYZBkRusP"
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [],
+      "metadata": {
+        "id": "0H59sK64TTLt"
+      },
+      "execution_count": null,
+      "outputs": []
+    }
+  ]
+}
